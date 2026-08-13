@@ -42,7 +42,9 @@ const resendClient = () => {
 
 const batches = (items, size) => Array.from({ length: Math.ceil(items.length / size) }, (_value, index) => items.slice(index * size, (index + 1) * size));
 
-app.set('trust proxy', process.env.TRUST_PROXY === 'true' ? 1 : false);
+// Vercel terminates HTTPS before forwarding requests to Express. Trust its
+// proxy in production so secure session cookies are emitted correctly.
+app.set('trust proxy', config.app.env === 'production' || process.env.TRUST_PROXY === 'true' ? 1 : false);
 app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(cors({
   origin: (origin, callback) => {
@@ -53,6 +55,12 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+app.use('/api', (_req, res, next) => {
+  // API responses include sessions and live CMS data; they must not be stored
+  // by a CDN between requests.
+  res.set('Cache-Control', 'no-store');
+  next();
+});
 app.use(sessionMiddleware);
 
 // The traditional server connects before app.listen(). Vercel imports the
