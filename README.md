@@ -63,7 +63,7 @@ Create a separate Vercel project for this `backend` directory. The project root 
 
 Set the same production variables from `.env.example` in the Vercel project. At minimum, set `NODE_ENV=production`, `MONGODB_URI`, `MONGODB_DATABASE`, `SESSION_SECRET`, `FRONTEND_URL`, `CORS_ALLOWED_ORIGINS`, `SESSION_SECURE_COOKIE=true`, and `SESSION_SAME_SITE=lax` when the frontend and API use subdomains of the same domain. Add the Cloudinary variables for media uploads and the Resend variables for newsletter sending.
 
-The MongoDB connection is cached between warm Vercel invocations. MongoDB Atlas must allow the Vercel deployment to connect (use Atlas network access appropriate for your security policy), and the database user must have permission to read and write the application database.
+The MongoDB connection is checked before requests and cached between warm Vercel invocations. This means `/api/health` also confirms that the deployed function can reach the configured database. MongoDB Atlas must allow the Vercel deployment to connect (use Atlas network access appropriate for your security policy), and the database user must have permission to read and write the application database.
 
 Local development is unchanged:
 

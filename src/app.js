@@ -7,7 +7,8 @@ import multer from 'multer';
 import bcrypt from 'bcryptjs';
 import { Resend } from 'resend';
 import { v2 as cloudinary } from 'cloudinary';
-import { config } from './config.js';
+import { assertProductionConfig, config } from './config.js';
+import { connectDatabase } from './db.js';
 import { sessionMiddleware, csrf, requireAdmin, requireCsrf, requirePermission, loginAdmin, safeAdmin } from './auth.js';
 import { asyncHandler, dataResponse, errorResponse } from './response.js';
 import { validate, consultationSchema, newsletterSchema, newsletterTemplateSchema, analyticsEventSchema, consentSchema, contentSchema, adminUserSchema } from './validation.js';
@@ -53,6 +54,20 @@ app.use(cors({
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 app.use(sessionMiddleware);
+
+// The traditional server connects before app.listen(). Vercel imports the
+// Express app directly, so establish the same database guarantee per warm
+// function and reuse the cached Mongoose connection from db.js.
+app.use(async (_req, _res, next) => {
+  if (config.app.env === 'test') return next();
+  try {
+    assertProductionConfig();
+    await connectDatabase();
+    return next();
+  } catch (error) {
+    return next(error);
+  }
+});
 app.get('/api/health', (_req, res) => res.json({ ok: true, runtime: 'node-express', build: apiBuild }));
 
 const publicLimiter = rateLimit({

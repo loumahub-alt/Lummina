@@ -20,7 +20,13 @@ export const connectDatabase = async () => {
     dbName: config.mongo.database,
     appName: 'Lummina Law Firm',
     serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS ?? 5000),
-  }).then(() => mongoose.connection).catch((error) => {
+  }).then(() => {
+    const connection = mongoose.connection;
+    // Once connected, readyState is the source of truth. Clearing the
+    // promise allows a later invocation to reconnect after a dropped socket.
+    connectionPromise = undefined;
+    return connection;
+  }).catch((error) => {
     connectionPromise = undefined;
     throw error;
   });
