@@ -42,6 +42,63 @@ const resendClient = () => {
 
 const batches = (items, size) => Array.from({ length: Math.ceil(items.length / size) }, (_value, index) => items.slice(index * size, (index + 1) * size));
 
+const normalizeNewsletterEmail = (value) => String(value ?? '').trim().toLowerCase();
+
+const newsletterUnsubscribeToken = (email) => crypto
+  .createHmac('sha256', config.session.secret || 'development-newsletter-secret')
+  .update(normalizeNewsletterEmail(email))
+  .digest('hex');
+
+const hasValidNewsletterUnsubscribeToken = (email, token) => {
+  const expected = Buffer.from(newsletterUnsubscribeToken(email));
+  const provided = Buffer.from(String(token ?? ''));
+  return expected.length === provided.length && crypto.timingSafeEqual(expected, provided);
+};
+
+const newsletterUnsubscribeUrl = (email) => {
+  const url = new URL('/api/public/newsletter/unsubscribe', config.app.url);
+  url.searchParams.set('email', normalizeNewsletterEmail(email));
+  url.searchParams.set('token', newsletterUnsubscribeToken(email));
+  return url.toString();
+};
+
+const escapeHtmlAttribute = (value) => String(value)
+  .replaceAll('&', '&amp;')
+  .replaceAll('"', '&quot;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;');
+
+const newsletterUnsubscribeFooter = (url) => `
+<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:24px;">
+  <tr>
+    <td style="padding:18px 0 0; border-top:1px solid #e4d2bd; color:#65575a; font-family:Arial, Helvetica, sans-serif; font-size:12px; line-height:1.6;">
+      You are receiving this email because you subscribed to the Lummina Law Firm newsletter.
+      <a href="${escapeHtmlAttribute(url)}" style="color:#5f021f; text-decoration:underline;">Unsubscribe</a>
+    </td>
+  </tr>
+</table>`;
+
+const ensureNewsletterUnsubscribeFooter = (html, url) => {
+  if (/<a\b[^>]*href\s*=\s*["'][^"']*(?:unsubscribe|newsletter\/unsubscribe)[^"']*["']/i.test(html)) return html;
+  const footer = newsletterUnsubscribeFooter(url);
+  return /<\/body>/i.test(html) ? html.replace(/<\/body>/i, footer + '</body>') : html + footer;
+};
+
+const newsletterText = (html) => String(html)
+  .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '')
+  .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+  .replace(/<br\s*\/?>/gi, '\n')
+  .replace(/<\/(?:p|div|h[1-6]|li|tr|td)>/gi, '\n')
+  .replace(/<[^>]+>/g, '')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/&amp;/gi, '&')
+  .replace(/&lt;/gi, '<')
+  .replace(/&gt;/gi, '>')
+  .replace(/&quot;/gi, '"')
+  .replace(/[ \t]+\n/g, '\n')
+  .replace(/\n{3,}/g, '\n\n')
+  .trim();
+
 // Vercel terminates HTTPS before forwarding requests to Express. Trust its
 // proxy in production so secure session cookies are emitted correctly.
 app.set('trust proxy', config.app.env === 'production' || process.env.TRUST_PROXY === 'true' ? 1 : false);
@@ -158,9 +215,26 @@ publicRouter.post('/consultations', validate(consultationSchema), asyncHandler(a
   });
   return dataResponse(res, { reference: consultation.reference, message: 'Your consultation request has been received.' }, 201);
 }));
+const unsubscribeNewsletter = asyncHandler(async (req, res) => {
+  const email = normalizeNewsletterEmail(req.query.email ?? req.body?.email);
+  const token = String(req.query.token ?? req.body?.token ?? '');
+  if (!email || !hasValidNewsletterUnsubscribeToken(email, token)) {
+    if (req.method === 'POST') return res.status(400).end();
+    return res.status(400).type('html').send('<!doctype html><html><body><h1>Unsubscribe link is invalid or expired.</h1></body></html>');
+  }
+  await NewsletterSubscriber.findOneAndUpdate(
+    { normalizedEmail: email },
+    { $set: { status: 'unsubscribed', unsubscribedAt: new Date() } },
+  );
+  // RFC 8058 one-click unsubscribe requests should receive an empty success response.
+  if (req.method === 'POST') return res.status(204).end();
+  return res.status(200).type('html').send('<!doctype html><html><body><h1>You have been unsubscribed.</h1><p>You will no longer receive Lummina Law Firm newsletters at this address.</p></body></html>');
+});
+publicRouter.get('/newsletter/unsubscribe', unsubscribeNewsletter);
+publicRouter.post('/newsletter/unsubscribe', unsubscribeNewsletter);
 publicRouter.post('/newsletter', validate(newsletterSchema), asyncHandler(async (req, res) => {
   const value = req.validated;
-  const email = value.email.toLowerCase();
+  const email = normalizeNewsletterEmail(value.email);
   const subscriber = await NewsletterSubscriber.findOneAndUpdate(
     { normalizedEmail: email },
     { $set: { email, normalizedEmail: email, status: 'subscribed', source: value.source, consentedAt: new Date(), unsubscribedAt: null } },
@@ -273,12 +347,21 @@ adminRouter.post('/newsletter/send', requirePermission('manage_newsletter'), asy
   let sentCount = 0;
   try {
     for (const recipientBatch of recipientBatches) {
-      const result = await resend.batch.send(recipientBatch.map((email) => ({
-        from: resendFrom(),
-        to: [email],
-        subject: template.data.subject,
-        html: template.data.html,
-      })));
+      const result = await resend.batch.send(recipientBatch.map((email) => {
+        const unsubscribeUrl = newsletterUnsubscribeUrl(email);
+        const html = ensureNewsletterUnsubscribeFooter(template.data.html, unsubscribeUrl);
+        return {
+          from: resendFrom(),
+          to: [email],
+          subject: template.data.subject,
+          html,
+          text: newsletterText(html),
+          headers: {
+            'List-Unsubscribe': '<' + unsubscribeUrl + '>',
+            'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+          },
+        };
+      }));
       if (result.error) {
         const error = new Error(result.error.message || 'Resend could not send the newsletter.');
         error.status = 502;

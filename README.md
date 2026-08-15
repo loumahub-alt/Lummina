@@ -40,7 +40,7 @@ Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET before 
 
 ## Newsletter sending
 
-Set `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optionally `RESEND_FROM_NAME` before using the admin Newsletter sender. The sender address must belong to a verified Resend domain. Newsletter HTML and subject are stored in MongoDB; sending reads only subscribers whose status is `subscribed` and sends each address separately in Resend batches.
+Set `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optionally `RESEND_FROM_NAME` before using the admin Newsletter sender. The sender address must belong to a verified Resend domain. Newsletter HTML and subject are stored in MongoDB; sending reads only subscribers whose status is `subscribed` and sends each address separately in Resend batches. Newsletter messages include a plain-text alternative, a personalized unsubscribe link, and RFC 8058 unsubscribe headers. The unsubscribe endpoint uses `APP_URL` and the production `SESSION_SECRET` to sign links.
 
 ## API groups
 
