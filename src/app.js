@@ -268,24 +268,45 @@ adminRouter.post('/newsletter/send', requirePermission('manage_newsletter'), asy
   const recipients = (await NewsletterSubscriber.find({ status: 'subscribed' }).select('email -_id').lean())
     .map((item) => String(item.email ?? '').trim().toLowerCase())
     .filter(Boolean);
+  if (!recipients.length) return errorResponse(res, 'There are no subscribed recipients to send this newsletter to.', 422);
   const recipientBatches = batches([...new Set(recipients)], resendBatchSize);
-  const sentIds = [];
-  for (const recipientBatch of recipientBatches) {
-    const result = await resend.batch.send(recipientBatch.map((email) => ({
-      from: resendFrom(),
-      to: [email],
-      subject: template.data.subject,
-      html: template.data.html,
-    })));
-    if (result.error) {
-      const error = new Error(result.error.message || 'Resend could not send the newsletter.');
-      error.status = 502;
-      throw error;
+  let sentCount = 0;
+  try {
+    for (const recipientBatch of recipientBatches) {
+      const result = await resend.batch.send(recipientBatch.map((email) => ({
+        from: resendFrom(),
+        to: [email],
+        subject: template.data.subject,
+        html: template.data.html,
+      })));
+      if (result.error) {
+        const error = new Error(result.error.message || 'Resend could not send the newsletter.');
+        error.status = 502;
+        throw error;
+      }
+      // Resend SDK/API versions can return batch data as either an array or a
+      // single response object. A successful strict batch represents the full
+      // recipientBatch, so count the submitted recipients rather than relying
+      // on one response shape.
+      sentCount += recipientBatch.length;
     }
-    sentIds.push(...(result.data ?? []).map((item) => item.id));
+  } catch (error) {
+    const providerError = error instanceof Error ? error : new Error('Resend could not send the newsletter.');
+    if (!providerError.status) {
+      console.error('Newsletter provider request failed:', providerError);
+      providerError.status = 502;
+      providerError.message = 'Resend could not send the newsletter.';
+    }
+    throw providerError;
   }
-  await logActivity({ adminId: req.admin._id, action: 'sent', entityType: 'newsletter', description: 'Sent a newsletter to ' + sentIds.length + ' subscribed recipients.', newValues: { recipients: sentIds.length, batches: recipientBatches.length }, req });
-  return dataResponse(res, { sent: sentIds.length, recipients: [...new Set(recipients)].length, batches: recipientBatches.length });
+  try {
+    await logActivity({ adminId: req.admin._id, action: 'sent', entityType: 'newsletter', description: 'Sent a newsletter to ' + sentCount + ' subscribed recipients.', newValues: { recipients: sentCount, batches: recipientBatches.length }, req });
+  } catch (error) {
+    // Sending succeeded; an audit-log failure should not make the admin retry
+    // and accidentally send the same newsletter twice.
+    console.error('Newsletter activity log failed after send:', error);
+  }
+  return dataResponse(res, { sent: sentCount, recipients: [...new Set(recipients)].length, batches: recipientBatches.length });
 }));
 adminRouter.get('/settings/:key', requirePermission('manage_site_settings'), asyncHandler(async (req, res) => dataResponse(res, await SiteSetting.findOne({ key: req.params.key }))));
 adminRouter.put('/settings/:key', requirePermission('manage_site_settings'), asyncHandler(async (req, res) => {
