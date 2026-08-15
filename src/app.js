@@ -249,7 +249,7 @@ adminRouter.get('/newsletter/template', requirePermission('manage_newsletter'), 
 }));
 adminRouter.put('/newsletter/template', requirePermission('manage_newsletter'), validate(newsletterTemplateSchema), asyncHandler(async (req, res) => {
   const value = req.validated;
-  if (/<script\b|on[a-z]+\s*=|javascript:/i.test(value.html)) return errorResponse(res, 'The newsletter template contains blocked script or event-handler markup.', 422);
+  if (/<script\b|\bon[a-z]+\s*=|javascript:/i.test(value.html)) return errorResponse(res, 'The newsletter template contains blocked script or event-handler markup.', 422);
   const setting = await SiteSetting.findOneAndUpdate(
     { key: newsletterTemplateKey },
     { $set: { key: newsletterTemplateKey, value, updatedBy: String(req.admin._id) } },
