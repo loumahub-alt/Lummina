@@ -17,6 +17,7 @@ export const config = {
     port: Number(envValue('PORT', '8000')),
     url: envValue('APP_URL', 'http://localhost:8000'),
     frontendUrl: envValue('FRONTEND_URL', 'http://localhost:5173'),
+    siteUrl: envValue('PUBLIC_SITE_URL', 'https://www.lumminalaw.com').replace(/\/$/, ''),
     origins: csv(envValue('CORS_ALLOWED_ORIGINS'), envValue('FRONTEND_URL', 'http://localhost:5173')),
   },
   mongo: {

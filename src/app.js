@@ -31,6 +31,37 @@ const permissions = {
 const newsletterTemplateKey = 'newsletter_template';
 const resendBatchSize = 100;
 
+const sitemapStaticPaths = [
+  ['/', '2026-08-04', '1.0'],
+  ['/about', '2026-08-04', '0.8'],
+  ['/practice-areas', '2026-08-04', '0.9'],
+  ['/our-team', '2026-08-04', '0.7'],
+  ['/results', '2026-08-04', '0.6'],
+  ['/insights', '2026-08-04', '0.8'],
+  ['/consultation', '2026-08-04', '0.9'],
+  ['/services/corporate-commercial-law-lagos', '2026-08-04', '0.9'],
+  ['/services/real-estate-property-law-lagos', '2026-08-04', '0.9'],
+  ['/services/debt-recovery-dispute-resolution-lagos', '2026-08-04', '0.9'],
+  ['/services/banking-lending-trade-finance-nigeria', '2026-08-04', '0.8'],
+  ['/services/intellectual-property-law-nigeria', '2026-08-04', '0.8'],
+  ['/services/compliance-governance-law-nigeria', '2026-08-04', '0.8'],
+  ['/services/private-client-estate-planning-law-lagos', '2026-08-04', '0.8'],
+];
+
+const escapeXml = (value) => String(value)
+  .replaceAll('&', '&amp;')
+  .replaceAll('<', '&lt;')
+  .replaceAll('>', '&gt;')
+  .replaceAll('"', '&quot;')
+  .replaceAll("'", '&apos;');
+
+const sitemapDate = (value, fallback = '2026-08-04') => {
+  const date = value ? new Date(value) : null;
+  return date && !Number.isNaN(date.valueOf()) ? date.toISOString().slice(0, 10) : fallback;
+};
+
+const sitemapUrl = (path, lastmod, priority) => `  <url>\n    <loc>${escapeXml(config.app.siteUrl + path)}</loc>\n    <lastmod>${escapeXml(lastmod)}</lastmod>\n    <priority>${escapeXml(priority)}</priority>\n  </url>`;
+
 const resendFrom = () => config.resend.fromName
   ? config.resend.fromName + ' <' + config.resend.fromEmail + '>'
   : config.resend.fromEmail;
@@ -193,6 +224,28 @@ publicRouter.get('/site-settings', asyncHandler(async (_req, res) => {
 publicRouter.get('/seo/:pageKey', asyncHandler(async (req, res) => {
   const page = await PageSeo.findOne({ pageKey: req.params.pageKey }).orFail();
   return dataResponse(res, { ...page.toJSON(), health: seoHealth(page.toObject()) });
+}));
+publicRouter.get('/sitemap.xml', asyncHandler(async (_req, res) => {
+  const publishedInsights = await publicContent('insights');
+  const staticEntries = sitemapStaticPaths.map(([path, lastmod, priority]) => sitemapUrl(path, lastmod, priority));
+  const articleEntries = publishedInsights
+    .filter((insight) => typeof insight.slug === 'string' && insight.slug.trim())
+    .map((insight) => sitemapUrl(
+      '/insights/' + encodeURIComponent(insight.slug),
+      sitemapDate(insight.updatedAt ?? insight.publishedAt),
+      '0.8',
+    ));
+
+  res
+    .type('application/xml')
+    .set('Cache-Control', 'public, max-age=300, s-maxage=3600, stale-while-revalidate=86400')
+    .send([
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+      ...staticEntries,
+      ...articleEntries,
+      '</urlset>',
+    ].join('\n'));
 }));
 publicRouter.get('/:resource/:slug', asyncHandler(async (req, res) => {
   if (!publicResources.includes(req.params.resource) || !['practice-areas', 'team', 'results', 'insights'].includes(req.params.resource)) return errorResponse(res, 'Not found.', 404);
